@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Pixel Dash — Endless Runner</title>
+<style>
+  :root { --ink:#17213b; --sky:#a8e7ff; --cream:#fff7d6; --pink:#ff6fae; --green:#72d6a0; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#202b54; font-family:ui-rounded,"Trebuchet MS",system-ui,sans-serif; }
+  body { display:grid; place-items:center; padding:12px; }
+  .game-shell { width:min(960px,100%); position:relative; border:5px solid #17213b; border-radius:20px; overflow:hidden; background:var(--sky); box-shadow:0 12px 0 #111a38,0 22px 50px #10172f88; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; background:var(--cream); color:var(--ink); border-bottom:4px solid var(--ink); }
+  .brand { font-weight:1000; letter-spacing:1px; font-size:clamp(16px,3vw,23px); }
+  .brand span { color:#ef4f94; }
+  .scorebox { font-weight:900; font-size:clamp(14px,2.8vw,19px); font-variant-numeric:tabular-nums; }
+  canvas { display:block; width:100%; aspect-ratio: 16 / 9; touch-action:manipulation; background:linear-gradient(#a8e7ff 0%,#d9f7ff 70%,#a5e7bd 70%); }
+  .hint { text-align:center; color:#fff7d6; font-size:12px; margin:13px 0 0; opacity:.9; }
+  .overlay { position:absolute; inset:58px 0 0; display:flex; align-items:center; justify-content:center; padding:18px; background:#17213b65; }
+  .panel { max-width:420px; width:100%; text-align:center; color:var(--ink); background:#fff7d6; border:4px solid var(--ink); border-radius:18px; padding:22px 18px; box-shadow:7px 7px 0 #17213b; }
+  .panel .emoji { font-size:46px; line-height:1.1; }
+  h1 { margin:7px 0 6px; font-size:clamp(26px,5vw,38px); line-height:1; }
+  .panel p { margin:8px 0 18px; line-height:1.4; }
+  button { border:3px solid var(--ink); background:#ff6fae; color:var(--ink); border-radius:12px; padding:12px 22px; font-weight:1000; font-size:17px; box-shadow:0 5px 0 var(--ink); cursor:pointer; touch-action:manipulation; }
+  button:active { transform:translateY(4px); box-shadow:0 1px 0 var(--ink); }
+  .small { font-size:12px; opacity:.75; margin-top:12px !important; }
+  .hidden { display:none; }
+  @media (max-width:520px) { body{padding:6px} .game-shell{border-width:3px;border-radius:14px} .topbar{padding:9px 11px} .overlay{inset:47px 0 0} .panel{padding:18px 14px} }
+</style>
+</head>
+<body>
+<div class="game-shell">
+  <div class="topbar"><div class="brand">PIXEL <span>DASH!</span></div><div class="scorebox">⭐ SCORE <span id="score">00000</span></div></div>
+  <canvas id="game" width="960" height="540" aria-label="Pixel Dash endless runner game"></canvas>
+  <div class="overlay" id="startOverlay">
+    <div class="panel">
+      <div class="emoji">🐰</div>
+      <h1>PIXEL DASH!</h1>
+      <p>Help Pip the bunny hop over the prickly obstacles. How far can you run?</p>
+      <button id="startBtn">LET'S RUN! ▶</button>
+      <p class="small">Tap anywhere / press SPACE to jump</p>
+    </div>
+  </div>
+  <div class="overlay hidden" id="overOverlay">
+    <div class="panel">
+      <div class="emoji">💫</div>
+      <h1>GAME OVER!</h1>
+      <p>Your score: <strong id="finalScore">0</strong><br>Best score: <strong id="bestScore">0</strong></p>
+      <button id="restartBtn">PLAY AGAIN ↻</button>
+      <p class="small">Tip: time your jump just before an obstacle.</p>
+    </div>
+  </div>
+</div>
+<p class="hint">SPACE / TAP TO JUMP · Avoid the cacti · Collect a new high score!</p>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const startOverlay = document.getElementById('startOverlay');
+  const overOverlay = document.getElementById('overOverlay');
+  const finalScoreEl = document.getElementById('finalScore');
+  const bestScoreEl = document.getElementById('bestScore');
+  const W = canvas.width, H = canvas.height;
+  const groundY = 430;
+  let state = 'ready', score = 0, best = 0, speed = 6, frame = 0, spawnTimer = 0;
+  let obstacles = [], clouds = [], particles = [];
+  const player = { x:145, y:groundY-64, w:56, h:64, vy:0, grounded:true, squash:0 };
+  try { best = Number(localStorage.getItem('pixelDashBest') || 0); } catch(e) {}
+
+  for (let i=0;i<6;i++) clouds.push({x:i*190+30,y:55+(i%3)*55,s:0.7+(i%3)*0.22});
+  function reset() {
+    score=0; speed=6; frame=0; spawnTimer=55; obstacles=[]; particles=[];
+    player.y=groundY-player.h; player.vy=0; player.grounded=true; player.squash=0;
+    scoreEl.textContent='00000';
+    state='playing'; startOverlay.classList.add('hidden'); overOverlay.classList.add('hidden');
+  }
+  function jump() {
+    if (state !== 'playing') return;
+    if (player.grounded) {
+      player.vy=-16.5; player.grounded=false; player.squash=1;
+      for(let i=0;i<6;i++) particles.push({x:player.x+25,y:groundY-5,vx:(Math.random()-.5)*3,vy:-Math.random()*3,life:18,color:'#fff7d6'});
+    }
+  }
+  function endGame() {
+    state='over'; finalScoreEl.textContent=Math.floor(score);
+    if(Math.floor(score)>best){best=Math.floor(score);try{localStorage.setItem('pixelDashBest',best)}catch(e){}}
+    bestScoreEl.textContent=best; overOverlay.classList.remove('hidden');
+  }
+  function rect(x,y,w,h,r,color) {
+    ctx.fillStyle=color; ctx.beginPath(); ctx.roundRect(x,y,w,h,r); ctx.fill();
+  }
+  function drawCloud(c) {
+    ctx.fillStyle='#ffffffcc'; ctx.beginPath();
+    ctx.ellipse(c.x,c.y,34*c.s,17*c.s,0,0,Math.PI*2);
+    ctx.ellipse(c.x-20*c.s,c.y+4*c.s,20*c.s,13*c.s,0,0,Math.PI*2);
+    ctx.ellipse(c.x+19*c.s,c.y+4*c.s,23*c.s,14*c.s,0,0,Math.PI*2);ctx.fill();
+  }
+  function drawBunny() {
+    const bob = player.grounded ? Math.sin(frame*.22)*2 : 0;
+    const x=player.x, y=player.y+bob;
+    // ears
+    rect(x+11,y-24,13,31,7,'#ffb7d0'); rect(x+30,y-29,13,36,7,'#ffb7d0');
+    rect(x+15,y-21,5,22,3,'#fff0f5'); rect(x+34,y-25,5,26,3,'#fff0f5');
+    // body and head
+    rect(x+3,y+17,48,44,13,'#f7f3ff');
+    rect(x+7,y,45,39,13,'#ffffff');
+    // cheek and face
+    ctx.fillStyle='#ff9dbd';ctx.beginPath();ctx.arc(x+14,y+25,5,0,Math.PI*2);ctx.arc(x+45,y+25,5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#263354';ctx.beginPath();ctx.arc(x+20,y+17,3,0,Math.PI*2);ctx.arc(x+38,y+17,3,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#ef5c91';ctx.beginPath();ctx.moveTo(x+27,y+23);ctx.lineTo(x+31,y+23);ctx.lineTo(x+29,y+27);ctx.closePath();ctx.fill();
+    // feet and tail
+    rect(x+7,y+53,19,10,5,'#ffb7d0');rect(x+31,y+53,19,10,5,'#ffb7d0');
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x+2,y+43,9,0,Math.PI*2);ctx.fill();
+    // little scarf
+    ctx.fillStyle='#ff6fae';ctx.beginPath();ctx.moveTo(x+8,y+36);ctx.lineTo(x+46,y+36);ctx.lineTo(x+36,y+44);ctx.lineTo(x+15,y+43);ctx.closePath();ctx.fill();
+  }
+  function drawCactus(o) {
+    const x=o.x,y=groundY-o.h;
+    rect(x+12,y,22,o.h,5,'#238b68');
+    rect(x,y+o.h*.36,15,13,5,'#238b68');
+    rect(x,y+o.h*.22,10,o.h*.23,5,'#238b68');
+    rect(x+31,y+o.h*.48,15,12,5,'#238b68');
+    rect(x+36,y+o.h*.30,10,o.h*.23,5,'#238b68');
+    // tiny spikes
+    ctx.strokeStyle='#d6ffe4';ctx.lineWidth=2;
+    for(let i=0;i<4;i++){ctx.beginPath();ctx.moveTo(x+17,y+12+i*15);ctx.lineTo(x+11,y+8+i*15);ctx.stroke();}
+  }
+  function draw() {
+    // sky
+    const grad=ctx.createLinearGradient(0,0,0,H);grad.addColorStop(0,'#8fe0ff');grad.addColorStop(.72,'#d7f8ff');grad.addColorStop(.721,'#a8e9bd');grad.addColorStop(1,'#6bc995');
+    ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+    // sun
+    ctx.fillStyle='#ffe17a';ctx.beginPath();ctx.arc(820,95,42,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#ffe17a99';ctx.lineWidth=5;for(let a=0;a<8;a++){let t=a*Math.PI/4;ctx.beginPath();ctx.moveTo(820+52*Math.cos(t),95+52*Math.sin(t));ctx.lineTo(820+64*Math.cos(t),95+64*Math.sin(t));ctx.stroke();}
+    clouds.forEach(drawCloud);
+    // distant hills
+    ctx.fillStyle='#8edbb0';ctx.beginPath();ctx.moveTo(0,groundY);ctx.quadraticCurveTo(160,300,330,groundY);ctx.quadraticCurveTo(500,330,700,groundY);ctx.quadraticCurveTo(850,310,960,groundY);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#65c98d';ctx.fillRect(0,groundY,W,H-groundY);
+    // ground line and dotted path
+    ctx.fillStyle='#267c64';ctx.fillRect(0,groundY,W,7);
+    ctx.fillStyle='#d7ffad';
+    for(let i=0;i<18;i++){let x=((i*72-(frame*speed*.8)%72)+W)%W;ctx.fillRect(x,groundY+34,30,5);}
+    // tiny flowers
+    for(let i=0;i<12;i++){let x=((i*91-(frame*speed*.35)%91)+W)%W;ctx.fillStyle=i%2?'#fff7d6':'#ff9ec5';ctx.beginPath();ctx.arc(x,groundY+76+(i%3)*7,4,0,Math.PI*2);ctx.fill();}
+    obstacles.forEach(drawCactus);
+    particles.forEach(p=>{ctx.globalAlpha=Math.max(0,p.life/18);ctx.fillStyle=p.color;ctx.fillRect(p.x,p.y,5,5);ctx.globalAlpha=1;});
+    drawBunny();
+    // tiny label
+    ctx.fillStyle='#173454aa';ctx.font='bold 15px Trebuchet MS';ctx.fillText('RUN, PIP, RUN!',24,35);
+  }
+  function update() {
+    if(state==='playing') {
+      frame++; score+=.12; speed=Math.min(12,6+score/120);
+      scoreEl.textContent=String(Math.floor(score)).padStart(5,'0');
+      clouds.forEach(c=>{c.x-=.45*c.s;if(c.x<-70)c.x=W+70;});
+      player.vy+=.72;player.y+=player.vy;
+      if(player.y>=groundY-player.h){player.y=groundY-player.h;player.vy=0;player.grounded=true;}
+      spawnTimer--;
+      if(spawnTimer<=0){const h=38+Math.random()*34;obstacles.push({x:W+20,h,w:46});spawnTimer=70+Math.random()*48-(speed-6)*3;}
+      obstacles.forEach(o=>o.x-=speed);
+      obstacles=obstacles.filter(o=>o.x+50>-10);
+      // forgiving hitbox
+      const px=player.x+10, py=player.y+9, pw=player.w-18, ph=player.h-12;
+      for(const o of obstacles){const ox=o.x+5, oy=groundY-o.h+5, ow=35, oh=o.h-5;
+        if(px<ox+ow && px+pw>ox && py<oy+oh && py+ph>oy){endGame();break;}
+      }
+      particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=.18;p.life--;});particles=particles.filter(p=>p.life>0);
+    } else { frame++; clouds.forEach(c=>{c.x-=.25*c.s;if(c.x<-70)c.x=W+70;}); }
+    draw(); requestAnimationFrame(update);
+  }
+  document.getElementById('startBtn').addEventListener('click',reset);
+  document.getElementById('restartBtn').addEventListener('click',reset);
+  canvas.addEventListener('pointerdown',e=>{e.preventDefault();if(state==='ready')reset();else jump();});
+  document.addEventListener('keydown',e=>{if(e.code==='Space'||e.code==='ArrowUp'||e.code==='KeyW'){e.preventDefault();if(state==='ready')reset();else jump();}if(state==='over'&&e.code==='Enter')reset();});
+  draw();requestAnimationFrame(update);
+})();
+</script>
+</body>
+</html>
